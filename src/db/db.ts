@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie'
-import type { Entry, Habit } from '../domain/types'
+import { DEFAULT_POINTS, ledgerRowsFromEntries } from '../domain/rewards'
+import type { Entry, Habit, LedgerRow } from '../domain/types'
 
 export interface SettingRow {
   key: string
@@ -11,6 +12,7 @@ export class TagwerkDB extends Dexie {
   habits!: EntityTable<Habit, 'id'>
   entries!: EntityTable<Entry, 'id'>
   settings!: EntityTable<SettingRow, 'key'>
+  ledger!: EntityTable<LedgerRow, 'id'>
 
   constructor() {
     super('tagwerk')
@@ -20,6 +22,14 @@ export class TagwerkDB extends Dexie {
       entries: 'id, habitId, day, updatedAt',
       settings: 'key',
     })
+    // Etappe 2: Buchungen für XP und Münzen. Bereits Erledigtes wird nachträglich gutgeschrieben.
+    this.version(2)
+      .stores({ ledger: 'id, day, kind, updatedAt' })
+      .upgrade(async (tx) => {
+        const habits = (await tx.table('habits').toArray()) as Habit[]
+        const entries = (await tx.table('entries').toArray()) as Entry[]
+        await tx.table('ledger').bulkPut(ledgerRowsFromEntries(habits, entries, DEFAULT_POINTS, Date.now()))
+      })
   }
 }
 

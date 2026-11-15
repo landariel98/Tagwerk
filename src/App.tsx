@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { ensureFirstUse } from './db/repo'
-import { useHabits, useSettings, useToday } from './hooks/useData'
+import { useHabits, useProgress, useSettings, useToday } from './hooks/useData'
+import { CharacterScreen } from './screens/CharacterScreen'
+import { LevelUpWatcher } from './screens/LevelUp'
 import { PlaceholderScreen } from './screens/PlaceholderScreen'
 import { SettingsScreen } from './screens/SettingsScreen'
 import { TodayScreen } from './screens/TodayScreen'
@@ -21,6 +23,7 @@ export function App() {
   const settings = useSettings()
   const habits = useHabits()
   const days = useToday(settings)
+  const progress = useProgress()
   const contentRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
@@ -34,7 +37,7 @@ export function App() {
     contentRef.current?.scrollTo(0, 0)
   }, [tab])
 
-  const ready = settings && habits && days
+  const ready = settings && habits && days && progress
 
   return (
     <div className="app">
@@ -45,16 +48,18 @@ export function App() {
             settings={settings}
             today={days.today}
             yesterday={days.yesterday}
+            progress={progress}
             onOpenBackup={() => setTab('settings')}
+            onOpenCharacter={() => setTab('character')}
           />
         )}
-        {tab === 'character' && (
-          <PlaceholderScreen title="Charakter" stage={2} text="Level, XP, die vier Attribute Körper, Vitalität, Seele und Ruhe sowie deine Ränge." />
-        )}
+        {ready && tab === 'character' && <CharacterScreen progress={progress} />}
         {tab === 'shop' && <PlaceholderScreen title="Shop" stage={3} text="Münzen, eigene Belohnungen, Sparziele und Boni." />}
         {tab === 'stats' && <PlaceholderScreen title="Statistik" stage={4} text="Heatmaps, Erfüllungsquoten und der Verlauf deiner Attribute." />}
         {ready && tab === 'settings' && <SettingsScreen habits={habits} settings={settings} />}
       </main>
+
+      {progress && <LevelUpWatcher progress={progress} />}
 
       <nav className="tabbar" aria-label="Hauptnavigation">
         {TABS.map((t) => (

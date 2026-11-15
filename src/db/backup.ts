@@ -1,8 +1,14 @@
 import { db, type SettingRow } from './db'
 import { saveSetting } from './repo'
-import type { Entry, Habit } from '../domain/types'
+import { ledgerRowsFromEntries } from '../domain/rewards'
+import { mergePoints } from '../domain/settings'
+import type { Entry, Habit, LedgerRow, PointSettings } from '../domain/types'
 
-export const BACKUP_FORMAT = 1
+/** Format 1: Etappe 1 (ohne Buchungen). Format 2: mit Buchungen (ledger). */
+export const BACKUP_FORMAT = 2
+
+/** Hier merkt sich die App, welche Level schon gefeiert wurden (siehe LevelUp.tsx). */
+export const SEEN_LEVELS_KEY = 'tagwerk.levels'
 
 export interface BackupFile {
   app: 'tagwerk'
@@ -12,12 +18,19 @@ export interface BackupFile {
     habits: Habit[]
     entries: Entry[]
     settings: SettingRow[]
+    /** Fehlt in Backups aus Etappe 1 und wird dann aus den Einträgen nachgebaut. */
+    ledger?: LedgerRow[]
   }
 }
 
 export async function buildBackup(): Promise<BackupFile> {
-  const [habits, entries, settings] = await Promise.all([db.habits.toArray(), db.entries.toArray(), db.settings.toArray()])
-  return { app: 'tagwerk', format: BACKUP_FORMAT, exportedAt: Date.now(), data: { habits, entries, settings } }
+  const [habits, entries, settings, ledger] = await Promise.all([
+    db.habits.toArray(),
+    db.entries.toArray(),
+    db.settings.toArray(),
+    db.ledger.toArray(),
+  ])
+  return { app: 'tagwerk', format: BACKUP_FORMAT, exportedAt: Date.now(), data: { habits, entries, settings, ledger } }
 }
 
 /** Prüft eine eingelesene Datei und gibt sie typisiert zurück oder wirft eine verständliche Fehlermeldung. */
@@ -45,17 +58,32 @@ export function parseBackup(text: string): BackupFile {
   if (entries.some((e) => typeof e?.id !== 'string' || typeof e?.habitId !== 'string' || typeof e?.day !== 'string')) {
     throw new Error('Das Backup enthält beschädigte Einträge.')
   }
+  const { ledger } = file.data
+  if (ledger !== undefined && (!Array.isArray(ledger) || ledger.some((r) => typeof r?.id !== 'string' || typeof r?.xp !== 'number'))) {
+    throw new Error('Das Backup enthält beschädigte Buchungen.')
+  }
   return file as BackupFile
 }
 
 /** Ersetzt alle Daten durch den Inhalt des Backups. */
 export async function restoreBackup(file: BackupFile): Promise<void> {
-  await db.transaction('rw', db.habits, db.entries, db.settings, async () => {
-    await Promise.all([db.habits.clear(), db.entries.clear(), db.settings.clear()])
-    await db.habits.bulkPut(file.data.habits)
-    await db.entries.bulkPut(file.data.entries)
-    await db.settings.bulkPut(file.data.settings)
+  const { habits, entries, settings } = file.data
+  const storedPoints = settings.find((s) => s.key === 'points')?.value as Partial<PointSettings> | undefined
+  const ledger = file.data.ledger ?? ledgerRowsFromEntries(habits, entries, mergePoints(storedPoints), Date.now())
+
+  await db.transaction('rw', db.habits, db.entries, db.settings, db.ledger, async () => {
+    await Promise.all([db.habits.clear(), db.entries.clear(), db.settings.clear(), db.ledger.clear()])
+    await db.habits.bulkPut(habits)
+    await db.entries.bulkPut(entries)
+    await db.settings.bulkPut(settings)
+    await db.ledger.bulkPut(ledger)
   })
+  // Die Level aus dem Backup gelten als bekannt, damit nicht alle Level-ups auf einmal gefeiert werden.
+  try {
+    localStorage.removeItem(SEEN_LEVELS_KEY)
+  } catch {
+    // ohne localStorage gibt es nichts zurückzusetzen
+  }
 }
 
 export function backupFileName(now = new Date()): string {

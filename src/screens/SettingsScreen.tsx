@@ -6,6 +6,7 @@ import { formatDateTime } from '../domain/dates'
 import type { Habit, Settings } from '../domain/types'
 import { HabitEditor } from './HabitEditor'
 import { HabitsManage } from './HabitsManage'
+import { PointsCard } from './PointsCard'
 import { TemplatePicker } from './TemplatePicker'
 
 interface Props {
@@ -94,6 +95,8 @@ export function SettingsScreen({ habits, settings }: Props) {
         </label>
       </section>
 
+      <PointsCard points={settings.points} />
+
       <section className="card" id="backup">
         <h2>Backup</h2>
         <p className="muted">
@@ -135,7 +138,7 @@ export function SettingsScreen({ habits, settings }: Props) {
 
       <section className="card">
         <h2>Über</h2>
-        <p className="muted">Tagwerk {__APP_VERSION__} · Etappe 1</p>
+        <p className="muted">Tagwerk {__APP_VERSION__} · Etappe 2</p>
       </section>
 
       {open === 'manage' && <HabitsManage habits={habits} onClose={() => setOpen(null)} onAdd={() => setOpen('templates')} />}

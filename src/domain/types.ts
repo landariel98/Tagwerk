@@ -60,17 +60,36 @@ export interface Entry extends SyncMeta {
   completedAt: number | null
 }
 
+/**
+ * Eine Buchung von XP und Münzen. Level und Kontostand ergeben sich aus der Summe aller Buchungen.
+ * Weitere Arten (Boni, Einkäufe) kommen in Etappe 3 dazu.
+ */
+export interface LedgerRow extends SyncMeta {
+  day: DayKey
+  kind: 'habit' | 'bonus'
+  /** Anzeigetext, z. B. der Name der Gewohnheit. */
+  reason: string
+  habitId: string | null
+  /** Attribut, dem die XP gutgeschrieben werden. null = nur Gesamtlevel. */
+  area: AreaId | null
+  /** Bei Gewohnheiten: der Zustand, für den gebucht wurde (erledigt oder Mini). */
+  state?: EntryState
+  xp: number
+  coins: number
+}
+
+export interface PointSettings {
+  xp: Record<Difficulty, number>
+  coins: Record<Difficulty, number>
+  /** Anteil der Punkte für die Mini-Version in Prozent. */
+  miniPercent: number
+}
+
 export interface Settings {
   /** Stunde, zu der ein neuer Tag beginnt (0–6). */
   dayStartHour: number
   firstUseAt: number
   lastBackupAt: number | null
   backupReminderDays: number
-}
-
-export const DEFAULT_SETTINGS: Settings = {
-  dayStartHour: 4,
-  firstUseAt: 0,
-  lastBackupAt: null,
-  backupReminderDays: 7,
+  points: PointSettings
 }

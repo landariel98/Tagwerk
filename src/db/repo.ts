@@ -1,15 +1,16 @@
 // Alle Schreibzugriffe auf die Datenbank laufen über diese Datei.
 import { stateForValue } from '../domain/frequency'
+import { habitLedgerId, habitLedgerRow } from '../domain/rewards'
+import { mergeSettings } from '../domain/settings'
 import type { HabitTemplate } from '../domain/templates'
-import { DEFAULT_SETTINGS, type DayKey, type Entry, type EntryState, type Habit, type HabitStatus, type Settings } from '../domain/types'
+import type { DayKey, Entry, EntryState, Habit, HabitStatus, Settings } from '../domain/types'
 import { db, newId } from './db'
 
 // ---------- Einstellungen ----------
 
 export async function loadSettings(): Promise<Settings> {
   const rows = await db.settings.toArray()
-  const stored = Object.fromEntries(rows.map((r) => [r.key, r.value]))
-  return { ...DEFAULT_SETTINGS, ...stored } as Settings
+  return mergeSettings(Object.fromEntries(rows.map((r) => [r.key, r.value])))
 }
 
 export async function saveSetting<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void> {
@@ -71,51 +72,83 @@ export async function deleteHabit(id: string): Promise<void> {
 
 const entryId = (habitId: string, day: DayKey) => `${habitId}_${day}`
 
-async function writeEntry(habit: Habit, day: DayKey, value: number, state: EntryState): Promise<void> {
-  const id = entryId(habit.id, day)
-  const now = Date.now()
-  const existing = await db.entries.get(id)
-  const completed = state !== 'open'
-  const entry: Entry = {
-    id,
-    habitId: habit.id,
-    day,
-    value,
-    state,
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now,
-    deletedAt: null,
-    completedAt: completed ? (existing?.completedAt ?? now) : null,
+type Change = { value: number; state: EntryState }
+
+/**
+ * Ändert den Eintrag einer Gewohnheit für einen Tag und hält die zugehörige XP-/Münz-Buchung aktuell.
+ * Lesen und Schreiben laufen in einer Transaktion: Schnelle Taps hintereinander gehen so nicht verloren.
+ * Gibt `change` null zurück, bleibt alles unverändert.
+ */
+async function mutateEntry(habit: Habit, day: DayKey, change: (existing: Entry | undefined) => Change | null): Promise<void> {
+  await db.transaction('rw', db.entries, db.ledger, db.settings, async () => {
+    const id = entryId(habit.id, day)
+    const now = Date.now()
+    const existing = await db.entries.get(id)
+    const next = change(existing)
+    if (!next) return
+    const entry: Entry = {
+      id,
+      habitId: habit.id,
+      day,
+      value: next.value,
+      state: next.state,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      deletedAt: null,
+      completedAt: next.state !== 'open' ? (existing?.completedAt ?? now) : null,
+    }
+    await db.entries.put(entry)
+    await syncHabitLedger(habit, entry, now)
+  })
+}
+
+/**
+ * Bucht die Belohnung für einen Eintrag oder nimmt sie zurück, wenn er wieder offen ist.
+ * Bleibt der Zustand gleich, bleibt die Buchung unverändert (auch wenn sich Punktwerte inzwischen geändert haben).
+ */
+async function syncHabitLedger(habit: Habit, entry: Entry, now: number): Promise<void> {
+  const id = habitLedgerId(habit.id, entry.day)
+  const existing = await db.ledger.get(id)
+  const active = existing && !existing.deletedAt ? existing : undefined
+  if (active && active.state === entry.state) return
+
+  const { points } = await loadSettings()
+  const row = habitLedgerRow(habit, entry, points, now)
+  if (row) {
+    await db.ledger.put({ ...row, createdAt: existing?.createdAt ?? now })
+  } else if (active) {
+    await db.ledger.update(id, { deletedAt: now, updatedAt: now })
   }
-  await db.entries.put(entry)
+}
+
+const valueChange = (habit: Habit, value: number, existing: Entry | undefined): Change => {
+  const clamped = Math.max(0, value)
+  return { value: clamped, state: stateForValue(habit, clamped, existing?.state) }
 }
 
 /** Abhaken und „Nicht getan“: schaltet zwischen offen und erledigt um. */
 export async function toggleDone(habit: Habit, day: DayKey): Promise<void> {
-  const existing = await db.entries.get(entryId(habit.id, day))
-  const isDone = existing?.state === 'done'
-  await writeEntry(habit, day, isDone ? 0 : 1, isDone ? 'open' : 'done')
+  await mutateEntry(habit, day, (existing) => (existing?.state === 'done' ? { value: 0, state: 'open' } : { value: 1, state: 'done' }))
 }
 
 /** Zähler und Dauer: setzt den Wert, der Zustand ergibt sich aus dem Ziel. */
 export async function setValue(habit: Habit, day: DayKey, value: number): Promise<void> {
-  const existing = await db.entries.get(entryId(habit.id, day))
-  const clamped = Math.max(0, value)
-  await writeEntry(habit, day, clamped, stateForValue(habit, clamped, existing?.state))
+  await mutateEntry(habit, day, (existing) => valueChange(habit, value, existing))
 }
 
 export async function addValue(habit: Habit, day: DayKey, delta: number): Promise<void> {
-  const existing = await db.entries.get(entryId(habit.id, day))
-  await setValue(habit, day, (existing?.value ?? 0) + delta)
+  await mutateEntry(habit, day, (existing) => valueChange(habit, (existing?.value ?? 0) + delta, existing))
 }
 
 /** Markiert die 2-Minuten-Version als gemacht. Ein bereits erreichtes Ziel bleibt „erledigt“. */
 export async function markMini(habit: Habit, day: DayKey): Promise<void> {
-  const existing = await db.entries.get(entryId(habit.id, day))
-  if (existing?.state === 'done') return
-  await writeEntry(habit, day, existing?.value ?? 0, 'mini')
+  await mutateEntry(habit, day, (existing) => (existing?.state === 'done' ? null : { value: existing?.value ?? 0, state: 'mini' }))
 }
 
 export async function resetEntry(habit: Habit, day: DayKey): Promise<void> {
-  await writeEntry(habit, day, 0, 'open')
+  await mutateEntry(habit, day, () => ({ value: 0, state: 'open' }))
+}
+
+export async function savePoints(points: Settings['points']): Promise<void> {
+  await saveSetting('points', points)
 }

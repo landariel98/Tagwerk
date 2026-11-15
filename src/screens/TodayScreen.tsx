@@ -4,6 +4,8 @@ import { isBackupDue } from '../db/backup'
 import { TIME_OF_DAY_LABELS } from '../domain/areas'
 import { formatDayLong } from '../domain/dates'
 import { groupByTimeOfDay, planDay, type PlannedHabit } from '../domain/frequency'
+import type { Progress } from '../domain/progress'
+import { rewardFor } from '../domain/rewards'
 import type { DayKey, Habit, Settings } from '../domain/types'
 import { useNow, useWeekEntries } from '../hooks/useData'
 import { elapsedSeconds, useRunningTimer } from '../hooks/timer'
@@ -22,10 +24,14 @@ interface Props {
   settings: Settings
   today: DayKey
   yesterday: DayKey
+  progress: Progress
   onOpenBackup: () => void
+  onOpenCharacter: () => void
 }
 
-export function TodayScreen({ habits, settings, today, yesterday, onOpenBackup }: Props) {
+const nf = new Intl.NumberFormat('de-DE')
+
+export function TodayScreen({ habits, settings, today, yesterday, progress, onOpenBackup, onOpenCharacter }: Props) {
   const [showYesterday, setShowYesterday] = useState(false)
   const [open, setOpen] = useState<Open>(null)
   const [celebrating, setCelebrating] = useState<string | null>(null)
@@ -49,7 +55,7 @@ export function TodayScreen({ habits, settings, today, yesterday, onOpenBackup }
 
   const celebrate = (habitId: string) => {
     setCelebrating(habitId)
-    setTimeout(() => setCelebrating((c) => (c === habitId ? null : c)), 700)
+    setTimeout(() => setCelebrating((c) => (c === habitId ? null : c)), 1100)
   }
 
   const tap = async ({ habit, completed }: PlannedHabit) => {
@@ -81,6 +87,7 @@ export function TodayScreen({ habits, settings, today, yesterday, onOpenBackup }
       completed={p.completed}
       liveSeconds={liveSeconds(p.habit)}
       celebrate={celebrating === p.habit.id}
+      gainXp={rewardFor(p.habit.difficulty, 'done', settings.points).xp}
       badge={badge}
       onTap={() => tap(p)}
       onMore={() => setOpen({ kind: 'actions', habitId: p.habit.id })}
@@ -94,6 +101,23 @@ export function TodayScreen({ habits, settings, today, yesterday, onOpenBackup }
   return (
     <div className="screen">
       <header className="today-head">
+        <button className="levelbar" onClick={onOpenCharacter} aria-label={`Level ${progress.total.level}, ${progress.rank.name}. Charakter öffnen`}>
+          <span className="levelbar-badge" aria-hidden>
+            {progress.total.level}
+          </span>
+          <span className="levelbar-text">
+            <span className="levelbar-top">
+              <strong>{progress.rank.name}</strong>
+              <span className="muted">
+                {nf.format(progress.total.into)} / {nf.format(progress.total.needed)} XP
+              </span>
+            </span>
+            <span className="xpbar" aria-hidden>
+              <span style={{ width: `${progress.total.fraction * 100}%` }} />
+            </span>
+          </span>
+        </button>
+
         <div className="today-top">
           <div>
             <div className="eyebrow">{showYesterday ? 'Gestern' : 'Heute'}</div>

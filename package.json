@@ -1,7 +1,7 @@
 {
   "name": "tagwerk",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Persönliche Habit-App mit Belohnungssystem",
   "type": "module",
   "scripts": {

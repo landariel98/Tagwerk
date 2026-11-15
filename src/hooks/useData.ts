@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react'
 import { db } from '../db/db'
 import { loadSettings } from '../db/repo'
 import { addDays, logicalDay, weekDays } from '../domain/dates'
+import { progressFromSummary, type Progress } from '../domain/progress'
+import { summarizeLedger } from '../domain/rewards'
 import type { DayKey, Entry, Habit, Settings } from '../domain/types'
 
 /** Aktuelle Uhrzeit, die sich regelmäßig und beim Zurückkehren in die App aktualisiert. */
@@ -40,6 +42,11 @@ export function useHabits(): Habit[] | undefined {
     const all = await db.habits.toArray()
     return all.filter((h) => !h.deletedAt).sort((a, b) => a.sortOrder - b.sortOrder)
   }, [])
+}
+
+/** Level, Rang und Attribut-Stände, berechnet aus allen Buchungen. */
+export function useProgress(): Progress | undefined {
+  return useLiveQuery(async () => progressFromSummary(summarizeLedger(await db.ledger.toArray())), [])
 }
 
 /** Einträge der Woche, in der der Tag liegt. */

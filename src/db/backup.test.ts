@@ -28,6 +28,14 @@ describe('parseBackup', () => {
     expect(() => parseBackup(JSON.stringify({ ...valid, format: 99 }))).toThrow('neueren')
   })
 
+  it('akzeptiert Backups mit und ohne Buchungen, lehnt beschädigte Buchungen ab', () => {
+    const withLedger = { ...valid, format: 2, data: { ...valid.data, ledger: [{ id: 'habit_a_2026-11-15', xp: 20 }] } }
+    expect(parseBackup(JSON.stringify(withLedger)).data.ledger).toHaveLength(1)
+    expect(parseBackup(JSON.stringify(valid)).data.ledger).toBeUndefined()
+    const broken = { ...valid, format: 2, data: { ...valid.data, ledger: [{ id: 'x' }] } }
+    expect(() => parseBackup(JSON.stringify(broken))).toThrow('Buchungen')
+  })
+
   it('lehnt unvollständige und beschädigte Daten ab', () => {
     expect(() => parseBackup(JSON.stringify({ ...valid, data: { habits: [] } }))).toThrow('unvollständig')
     expect(() => parseBackup(JSON.stringify({ ...valid, data: { ...valid.data, habits: [{ id: 1 }] } }))).toThrow('Gewohnheiten')
